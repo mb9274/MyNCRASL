@@ -3,12 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { LanguagePicker } from "@/components/language-picker";
-import type { Language } from "@/lib/types";
 
-export function RegisterForm({ initialLanguage }: { initialLanguage: Language }) {
+export function RegisterForm() {
   const router = useRouter();
-  const [language, setLanguage] = useState<Language>(initialLanguage);
   const [role, setRole] = useState<"citizen" | "assistant">("citizen");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -28,7 +25,7 @@ export function RegisterForm({ initialLanguage }: { initialLanguage: Language })
           email: form.get("email"),
           password: form.get("password"),
           confirmPassword: form.get("confirmPassword"),
-          preferredLanguage: language,
+          preferredLanguage: "en",
           role,
         }),
       });
@@ -49,10 +46,8 @@ export function RegisterForm({ initialLanguage }: { initialLanguage: Language })
     <form onSubmit={handleSubmit} className="card space-y-5 p-6 sm:p-8">
       <div>
         <h1 className="text-2xl font-bold">Create your account</h1>
-        <p className="mt-1 text-sm text-ink-500">It takes about two minutes. You can use English or your local language.</p>
+        <p className="mt-1 text-sm text-ink-500">It takes about two minutes.</p>
       </div>
-
-      <LanguagePicker current={language} onSelect={setLanguage} label="Choose your language" />
 
       <div>
         <label className="label" htmlFor="fullName">Full name</label>

@@ -2,10 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import { addAuditLog, createSession, deleteExpiredSessions, deleteSessionByTokenHash, findSessionByTokenHash, findUserById } from "./db";
-import { isLanguage } from "./i18n";
 import type { Language, User } from "./types";
-
-export const LANGUAGE_COOKIE = "myncra_lang";
 
 const COOKIE_NAME = "myncra_session";
 const SESSION_DAYS = 7;
@@ -72,23 +69,9 @@ export async function getCurrentUser(): Promise<User | null> {
   };
 }
 
+// The interface is English-only. Local languages are handled by VoiceBridge audio later.
 export async function getLanguagePreference(): Promise<Language> {
-  const user = await getCurrentUser();
-  if (user) return user.preferredLanguage;
-  const jar = await cookies();
-  const value = jar.get(LANGUAGE_COOKIE)?.value;
-  return isLanguage(value) ? value : "en";
-}
-
-export async function setAnonymousLanguage(language: Language): Promise<void> {
-  const jar = await cookies();
-  jar.set(LANGUAGE_COOKIE, language, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
-  });
+  return "en";
 }
 
 export async function requireUser(): Promise<User> {

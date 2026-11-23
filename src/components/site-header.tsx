@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser, getLanguagePreference } from "@/lib/auth";
 import { translate } from "@/lib/i18n";
-import { LanguagePicker } from "./language-picker";
 
 export async function SiteHeader() {
   const user = await getCurrentUser();
@@ -25,7 +24,6 @@ export async function SiteHeader() {
           )}
         </nav>
         <div className="ml-auto flex items-center gap-2">
-          <LanguagePicker current={lang} compact />
           {user ? (
             <form action="/api/auth/logout" method="post">
               <button className="btn-ghost" type="submit">{t("signOut")}</button>

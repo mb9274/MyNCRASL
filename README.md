@@ -57,9 +57,8 @@ There is no SMS/email gateway in this prototype, so the 6-digit verification cod
 - Create an account (citizen or community assistant) with Sierra Leone phone normalisation.
 - Phone/email verification with a 6-digit code (demo code displayed).
 - Secure sign in / sign out with server-side sessions.
-- Language selection across English, Krio, Mende, Temne, Limba, Fula, Kono and Loko. The UI dictionary currently covers
-  English and Krio; other languages fall back to English until validated translations are added. The preference is stored
-  per user (or in a cookie for visitors).
+- **English-only interface.** All platform text is in English. Local-language support (Krio, Mende, Temne, Limba, Fula,
+  Kono, Loko) is planned as VoiceBridge *audio* assistance in a later feature, not as translated UI text.
 - Citizen dashboard with service tiles and notification area.
 - Audit logging of sensitive account actions.
 

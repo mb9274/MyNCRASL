@@ -65,48 +65,10 @@ const en = {
 
 export type TranslationKey = keyof typeof en;
 
-const krio: Partial<Record<TranslationKey, string>> = {
-  appName: "MyNCRA",
-  tagline: "Wan platifòm. Ɛvri Sierra Leonean. Ɛvriwie.",
-  demoNotice: "Dis na dimonstreshon platifòm — i no bi ofishal NCRA sistim.",
-  home: "Hom",
-  about: "Baut",
-  services: "Savis",
-  language: "Lengwij",
-  selectLanguage: "Pik yu lengwij",
-  continue: "Kontinue",
-  back: "Bak",
-  signIn: "Log in",
-  signOut: "Kom out",
-  createAccount: "Mek akkaunt",
-  fullName: "Ful nem",
-  phoneNumber: "Fon noma",
-  emailOptional: "Imel (if yu gɛt wan)",
-  password: "Paswod",
-  confirmPassword: "Kɔnfɔm paswod",
-  citizen: "Sitizen",
-  verifyAccount: "Vɛrify yu akkaunt",
-  verificationHelp: "Put di 6-nomba kod we dem sɛn to yu fon ɔ imel.",
-  verify: "Vɛrify",
-  resendCode: "Sɛn nyu kod",
-  dashboard: "Mi dashboard",
-  welcome: "Welkom",
-  applyId: "Apply fo Nashonal ID",
-  myApplications: "Mi aplikeshons",
-  appointments: "Appointments",
-  notifications: "Notifikeshons",
-  wallet: "Digital wallet",
-  voiceBridge: "VoiceBridge",
-  needHelp: "Yu nid help?",
-  voiceHelp: "Yuz VoiceBridge fo hia in yu lengwij",
-  invalidInput: "Chɛk di infɔmeshon we yu put.",
-  somethingWrong: "Sɛntin rɔng. Try again.",
-};
-
-const dictionaries: Partial<Record<Language, Partial<Record<TranslationKey, string>>>> = { krio };
-
-export function translate(language: Language, key: TranslationKey): string {
-  return dictionaries[language]?.[key] ?? en[key];
+// The platform interface is English-only. Local-language support is delivered through
+// VoiceBridge audio (a later feature), not through translated UI text.
+export function translate(_language: Language, key: TranslationKey): string {
+  return en[key];
 }
 
 export function isLanguage(value: unknown): value is Language {
