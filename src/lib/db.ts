@@ -1,5 +1,6 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { Application, ApplicationStatus, AuditLog, Language, Notification, Office, Role, User } from "./types";
 
@@ -7,14 +8,28 @@ type Db = DatabaseSync;
 
 const globalForDb = globalThis as unknown as { myNcraDb?: Db };
 
-function createDb(): Db {
-  const dbPath = process.env.MYNCRA_DB_PATH || path.join(process.cwd(), "data", "myncra.db");
+function openDb(dbPath: string): Db {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 10000; PRAGMA synchronous = NORMAL;");
-  migrate(db);
-  seedOffices(db);
-  return db;
+  const database = new DatabaseSync(dbPath);
+  database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 10000; PRAGMA synchronous = NORMAL;");
+  migrate(database);
+  seedOffices(database);
+  return database;
+}
+
+function createDb(): Db {
+  // Vercel serverless functions have a read-only filesystem except for /tmp.
+  // Using process.cwd() there throws and takes down every page with a 500.
+  const onVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+  const dbPath = process.env.MYNCRA_DB_PATH || (onVercel ? path.join(os.tmpdir(), "myncra.db") : path.join(process.cwd(), "data", "myncra.db"));
+  try {
+    return openDb(dbPath);
+  } catch (error) {
+    // Last-resort fallback so the site still renders even if the filesystem or
+    // SQLite is unavailable. Data is not persisted in this mode.
+    console.warn("[MyNCRA] SQLite unavailable; using in-memory database:", error);
+    return openDb(":memory:");
+  }
 }
 
 export const db: Db = globalForDb.myNcraDb ?? createDb();
