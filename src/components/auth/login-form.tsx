@@ -38,7 +38,7 @@ export function LoginForm() {
       </div>
       <div>
         <label className="label" htmlFor="identifier">Phone number or email</label>
-        <input className="input" id="identifier" name="identifier" autoComplete="username" required placeholder="076 123 4567 or you@example.com" />
+        <input className="input" id="identifier" name="identifier" autoComplete="username" required placeholder="076 123 456 or you@example.com" />
       </div>
       <div>
         <label className="label" htmlFor="password">Password</label>

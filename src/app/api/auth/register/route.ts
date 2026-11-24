@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const input = schema.parse(body);
     const phone = normalizeSierraLeonePhone(input.phone);
-    if (!phone) return fail("Enter a valid Sierra Leone phone number, e.g. 076123456 or +23276123456.", 422);
+    if (!phone) return fail("Enter a valid Sierra Leone phone number (8 digits after +232), e.g. 076 123 456 or +232 76 123 456.", 422);
 
     if (findUserByPhone(phone)) throw new Error("CONFLICT");
     const email = input.email || null;

@@ -57,7 +57,7 @@ export function RegisterForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="label" htmlFor="phone">Sierra Leone phone number</label>
-          <input className="input" id="phone" name="phone" type="tel" autoComplete="tel" required placeholder="076 123 4567" />
+          <input className="input" id="phone" name="phone" type="tel" autoComplete="tel" required placeholder="076 123 456" />
         </div>
         <div>
           <label className="label" htmlFor="email">Email address <span className="font-normal text-ink-500">(optional)</span></label>
