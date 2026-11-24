@@ -44,8 +44,38 @@ export interface Application {
   officeId: string | null;
   appointmentAt: string | null;
   submittedAt: string | null;
+  photoDocumentId: string | null;
+  photoStoragePath: string | null;
+  photoOriginalName: string | null;
+  photoMimeType: string | null;
+  photoSizeBytes: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DocumentRecord {
+  id: string;
+  applicationId: string;
+  userId: string;
+  docType: string;
+  originalName: string;
+  storagePath: string;
+  mimeType: string;
+  sizeBytes: number;
+  checksum: string | null;
+  isActive: boolean;
+  createdAt: string;
+  content?: Buffer;
+}
+
+export interface ApplicationEvent {
+  id: string;
+  applicationId: string;
+  fromStatus: ApplicationStatus | null;
+  toStatus: ApplicationStatus;
+  actorId: string | null;
+  note: string | null;
+  createdAt: string;
 }
 
 export interface Office {

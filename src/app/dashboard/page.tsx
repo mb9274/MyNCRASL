@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { applicantsName, formatApplicationDate, STATUS_INFO } from "@/lib/application-config";
 import { getCurrentUser, getLanguagePreference } from "@/lib/auth";
-import { listNotifications } from "@/lib/db";
+import { listApplicationsForUser, listNotifications } from "@/lib/db";
 import { translate } from "@/lib/i18n";
 import { displayPhone } from "@/lib/validation";
 
@@ -11,10 +12,11 @@ export default async function DashboardPage() {
   const lang = await getLanguagePreference();
   const t = (key: Parameters<typeof translate>[1]) => translate(lang, key);
   const notifications = listNotifications(user.id);
+  const applications = listApplicationsForUser(user.id);
 
   const actions = [
-    { title: t("applyId"), description: "Start a new national ID application", href: "/apply", icon: "ID", enabled: false },
-    { title: t("myApplications"), description: "Track submitted applications", href: "/applications", icon: "📋", enabled: false },
+    { title: t("applyId"), description: "Start a new national ID application", href: "/apply", icon: "ID", enabled: true },
+    { title: t("myApplications"), description: "Track submitted applications", href: "/applications", icon: "📋", enabled: true },
     { title: t("appointments"), description: "Book or view office appointments", href: "/appointments", icon: "📅", enabled: false },
     { title: t("voiceBridge"), description: "Speak or listen in your language", href: "/voicebridge", icon: "🎙", enabled: false },
     { title: t("wallet"), description: "View officially issued credentials", href: "/wallet", icon: "▣", enabled: false },
@@ -61,9 +63,55 @@ export default async function DashboardPage() {
 
       <section className="mt-10 grid gap-6 lg:grid-cols-2">
         <div className="card p-6">
-          <h2 className="text-lg font-bold">{t("myApplications")}</h2>
-          <p className="mt-2 text-sm text-ink-500">{t("noApplications")}</p>
-          <p className="mt-4 text-xs text-ink-500">Application submission, tracking and reference numbers arrive in the next build step.</p>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">{t("myApplications")}</h2>
+            <Link href="/applications" className="text-sm font-semibold text-brand-700 hover:underline">View all</Link>
+          </div>
+          {applications.length === 0 ? (
+            <>
+              <p className="mt-2 text-sm text-ink-500">{t("noApplications")}</p>
+              <Link href="/apply" className="btn-primary mt-4">Start an application</Link>
+            </>
+          ) : (
+            <ul className="mt-4 space-y-4">
+              {applications.slice(0, 3).map((application) => {
+                const info = STATUS_INFO[application.status];
+                const name = applicantsName(application.formData);
+                const previewUrl = application.photoStoragePath ? `/api/applications/${application.id}/photo` : "";
+                return (
+                  <li key={application.id} className="rounded-xl border border-slate-200 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                        {previewUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={previewUrl} alt={`Passport photograph for ${name}`} className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-xl text-slate-400" aria-label="No photograph uploaded">▣</span>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold">{name}</p>
+                        <p className="text-xs text-ink-500">{application.reference}</p>
+                        <p className="mt-0.5 text-xs text-ink-500">
+                          {application.status === "draft"
+                            ? `Started ${formatApplicationDate(application.createdAt)}`
+                            : `Submitted ${formatApplicationDate(application.submittedAt)}`}
+                        </p>
+                      </div>
+                      <span className="badge bg-brand-50 text-brand-700">{info.label}</span>
+                    </div>
+                    <p className="mt-3 text-xs text-ink-500">Next: {info.nextSteps[0]}</p>
+                    <Link
+                      href={application.status === "draft" ? "/apply" : `/applications/${application.id}`}
+                      className="btn-ghost mt-2 px-0 text-sm"
+                    >
+                      {application.status === "draft" ? "Continue draft" : "View application"}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
         <div className="card p-6">
           <h2 className="text-lg font-bold">{t("notifications")}</h2>

@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:id-app": "node scripts/test-id-application.mjs"
   },
   "dependencies": {
     "next": "^16.4.6",

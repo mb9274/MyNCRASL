@@ -2,7 +2,18 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Application, ApplicationStatus, AuditLog, Language, Notification, Office, Role, User } from "./types";
+import type {
+  Application,
+  ApplicationEvent,
+  ApplicationStatus,
+  AuditLog,
+  DocumentRecord,
+  Language,
+  Notification,
+  Office,
+  Role,
+  User,
+} from "./types";
 
 type Db = DatabaseSync;
 
@@ -168,6 +179,23 @@ function migrate(database: Db) {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
   `);
+
+  // Additive migrations for passport photograph support. Existing records are untouched.
+  ensureColumn(database, "documents", "storage_path", "TEXT");
+  ensureColumn(database, "documents", "content", "BLOB");
+  ensureColumn(database, "documents", "checksum", "TEXT");
+  ensureColumn(database, "documents", "is_active", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(database, "applications", "photo_document_id", "TEXT");
+  ensureColumn(database, "applications", "photo_storage_path", "TEXT");
+  ensureColumn(database, "applications", "photo_original_name", "TEXT");
+  ensureColumn(database, "applications", "photo_mime_type", "TEXT");
+  ensureColumn(database, "applications", "photo_size_bytes", "INTEGER");
+}
+
+function ensureColumn(database: Db, table: string, column: string, definition: string) {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (columns.some((entry) => entry.name === column)) return;
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function seedOffices(database: Db) {
@@ -321,6 +349,11 @@ export function toApplication(row: Record<string, unknown>): Application {
     officeId: row.office_id ? String(row.office_id) : null,
     appointmentAt: row.appointment_at ? String(row.appointment_at) : null,
     submittedAt: row.submitted_at ? String(row.submitted_at) : null,
+    photoDocumentId: row.photo_document_id ? String(row.photo_document_id) : null,
+    photoStoragePath: row.photo_storage_path ? String(row.photo_storage_path) : null,
+    photoOriginalName: row.photo_original_name ? String(row.photo_original_name) : null,
+    photoMimeType: row.photo_mime_type ? String(row.photo_mime_type) : null,
+    photoSizeBytes: row.photo_size_bytes === null || row.photo_size_bytes === undefined ? null : Number(row.photo_size_bytes),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -400,4 +433,187 @@ export function listAuditLogs(limit = 100): AuditLog[] {
     targetType: row.target_type ? String(row.target_type) : null, targetId: row.target_id ? String(row.target_id) : null,
     detail: row.detail ? String(row.detail) : null, createdAt: String(row.created_at),
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* National ID applications — all lookups are scoped to the authenticated user */
+/* -------------------------------------------------------------------------- */
+
+export function findDraftApplication(userId: string, type = "national_id"): Application | null {
+  const row = db.prepare(
+    "SELECT * FROM applications WHERE user_id = ? AND type = ? AND status = 'draft' ORDER BY updated_at DESC LIMIT 1",
+  ).get(userId, type) as Record<string, unknown> | undefined;
+  return row ? toApplication(row) : null;
+}
+
+export function findApplicationForUser(userId: string, applicationId: string): Application | null {
+  const row = db.prepare("SELECT * FROM applications WHERE id = ? AND user_id = ?").get(applicationId, userId) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? toApplication(row) : null;
+}
+
+export function listApplicationsForUser(userId: string): Application[] {
+  const rows = db.prepare("SELECT * FROM applications WHERE user_id = ? ORDER BY updated_at DESC").all(userId) as Record<string, unknown>[];
+  return rows.map(toApplication);
+}
+
+export function createDraftApplication(userId: string, formData: Record<string, unknown>, type = "national_id"): Application {
+  const id = newId("app");
+  const timestamp = now();
+  db.prepare(
+    `INSERT INTO applications (id, reference, user_id, type, status, form_data, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
+  ).run(id, generateReference(), userId, type, JSON.stringify(formData), timestamp, timestamp);
+  addApplicationEvent(id, null, "draft", userId, "Draft created");
+  return findApplicationForUser(userId, id)!;
+}
+
+export function updateDraftForm(userId: string, applicationId: string, formData: Record<string, unknown>): Application | null {
+  const result = db.prepare(
+    "UPDATE applications SET form_data = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'draft'",
+  ).run(JSON.stringify(formData), now(), applicationId, userId);
+  if (result.changes === 0) return null;
+  return findApplicationForUser(userId, applicationId);
+}
+
+export function addApplicationEvent(
+  applicationId: string,
+  fromStatus: ApplicationStatus | null,
+  toStatus: ApplicationStatus,
+  actorId: string | null,
+  note: string | null,
+): void {
+  db.prepare(
+    "INSERT INTO application_events (id, application_id, from_status, to_status, actor_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(newId("aev"), applicationId, fromStatus, toStatus, actorId, note, now());
+}
+
+export function listApplicationEvents(userId: string, applicationId: string): ApplicationEvent[] {
+  const rows = db.prepare(
+    `SELECT e.* FROM application_events e
+     JOIN applications a ON a.id = e.application_id
+     WHERE e.application_id = ? AND a.user_id = ? ORDER BY e.created_at ASC`,
+  ).all(applicationId, userId) as Record<string, unknown>[];
+  return rows.map((row) => ({
+    id: String(row.id),
+    applicationId: String(row.application_id),
+    fromStatus: row.from_status ? (row.from_status as ApplicationStatus) : null,
+    toStatus: row.to_status as ApplicationStatus,
+    actorId: row.actor_id ? String(row.actor_id) : null,
+    note: row.note ? String(row.note) : null,
+    createdAt: String(row.created_at),
+  }));
+}
+
+function toDocument(row: Record<string, unknown>, includeContent = false): DocumentRecord {
+  const document: DocumentRecord = {
+    id: String(row.id),
+    applicationId: String(row.application_id),
+    userId: String(row.user_id),
+    docType: String(row.doc_type),
+    originalName: String(row.original_name),
+    storagePath: String(row.storage_path ?? ""),
+    mimeType: String(row.mime_type),
+    sizeBytes: Number(row.size_bytes),
+    checksum: row.checksum ? String(row.checksum) : null,
+    isActive: Number(row.is_active ?? 1) === 1,
+    createdAt: String(row.created_at),
+  };
+  if (includeContent) document.content = row.content ? Buffer.from(row.content as Uint8Array) : Buffer.alloc(0);
+  return document;
+}
+
+export function saveApplicationPhoto(input: {
+  userId: string;
+  applicationId: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+  checksum: string;
+  content: Buffer;
+}): DocumentRecord | null {
+  const application = findApplicationForUser(input.userId, input.applicationId);
+  if (!application || application.status !== "draft") return null;
+
+  let saved: DocumentRecord | null = null;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE documents SET is_active = 0 WHERE application_id = ? AND doc_type = 'passport_photo'").run(input.applicationId);
+    const id = newId("doc");
+    db.prepare(
+      `INSERT INTO documents (id, application_id, user_id, doc_type, original_name, stored_name, storage_path, mime_type, size_bytes, checksum, content, is_active, created_at)
+       VALUES (?, ?, ?, 'passport_photo', ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    ).run(id, input.applicationId, input.userId, input.originalName, input.storagePath, input.storagePath, input.mimeType, input.sizeBytes, input.checksum, input.content, now());
+    db.prepare(
+      `UPDATE applications SET photo_document_id = ?, photo_storage_path = ?, photo_original_name = ?, photo_mime_type = ?, photo_size_bytes = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'draft'`,
+    ).run(id, input.storagePath, input.originalName, input.mimeType, input.sizeBytes, now(), input.applicationId, input.userId);
+    const row = db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as Record<string, unknown>;
+    saved = toDocument(row);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return saved;
+}
+
+export function getApplicationPhoto(userId: string, applicationId: string): DocumentRecord | null {
+  const row = db.prepare(
+    `SELECT d.* FROM documents d
+     JOIN applications a ON a.id = d.application_id
+     WHERE d.application_id = ? AND a.user_id = ? AND d.doc_type = 'passport_photo' AND d.is_active = 1
+     ORDER BY d.created_at DESC LIMIT 1`,
+  ).get(applicationId, userId) as Record<string, unknown> | undefined;
+  return row ? toDocument(row, true) : null;
+}
+
+export function removeApplicationPhoto(userId: string, applicationId: string): boolean {
+  const application = findApplicationForUser(userId, applicationId);
+  if (!application || application.status !== "draft") return false;
+  const result = db.prepare(
+    `UPDATE documents SET is_active = 0 WHERE application_id = ? AND user_id = ? AND doc_type = 'passport_photo' AND is_active = 1`,
+  ).run(applicationId, userId);
+  db.prepare(
+    `UPDATE applications SET photo_document_id = NULL, photo_storage_path = NULL, photo_original_name = NULL, photo_mime_type = NULL, photo_size_bytes = NULL, updated_at = ?
+     WHERE id = ? AND user_id = ? AND status = 'draft'`,
+  ).run(now(), applicationId, userId);
+  return result.changes > 0;
+}
+
+/** Finalises a draft. Reference and status are changed atomically; repeat calls are idempotent. */
+export function submitApplication(userId: string, applicationId: string, formData: Record<string, unknown>): Application | null {
+  const current = findApplicationForUser(userId, applicationId);
+  if (!current) return null;
+  if (current.status !== "draft") return current; // prevents duplicate submissions
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      `UPDATE applications SET form_data = ?, status = 'submitted', submitted_at = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'draft'`,
+    ).run(JSON.stringify(formData), now(), now(), applicationId, userId);
+    addApplicationEvent(applicationId, "draft", "submitted", userId, "Test application submitted in prototype");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  const submitted = findApplicationForUser(userId, applicationId)!;
+  addNotification({
+    userId,
+    applicationId,
+    title: "Test application submitted",
+    body: `Your application ${submitted.reference} was received in this prototype. It has not been sent to NCRA.`,
+  });
+  addAuditLog({
+    actorId: userId,
+    action: "application.submitted",
+    targetType: "application",
+    targetId: applicationId,
+    detail: `reference=${submitted.reference} (prototype, not sent to NCRA)`,
+  });
+  return submitted;
 }
