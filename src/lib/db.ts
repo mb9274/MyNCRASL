@@ -285,7 +285,7 @@ export function findUserByPhone(phone: string): (User & { passwordHash: string }
 }
 
 export function findUserByEmail(email: string): (User & { passwordHash: string }) | null {
-  const row = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as Record<string, unknown> | undefined;
+  const row = db.prepare("SELECT * FROM users WHERE LOWER(email) = LOWER(?)").get(email) as Record<string, unknown> | undefined;
   return row ? toUser(row) : null;
 }
 

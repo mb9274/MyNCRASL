@@ -23,7 +23,8 @@ one at a time.
   behind logical references such as `db://photos/<applicationId>/<uuid>` and `db://documents/<applicationId>/<uuid>`.
   No temporary local file path is persisted.
 - **Auth:** server-side sessions (httpOnly cookie), scrypt password hashing, hashed verification codes, role-based access.
-  International phone numbers are stored in E.164-like form (`+447700900123`); `+44` and `0044` input styles are accepted.
+  International phone numbers are stored in E.164-like form (`+447700900123`); `+44`, `0044` and `+44 (0)` input styles
+  are accepted. Email sign-in is case-insensitive, and Sierra Leone numbers work with or without the local trunk zero.
 - **Validation:** Zod.
 - **VoiceBridge:** will use a pluggable provider interface. A local demo provider ships first; real speech/translation
   models are only connected after native-speaker validation and NCRA approval.
@@ -73,10 +74,9 @@ that nothing was delivered.
 ## Homepage entry routes and card showcase
 
 The homepage offers two clear entry points: **Apply for Your National ID** (`/apply?from=sl`) and **I'm Living Abroad**
-(`/apply?from=abroad`). It also includes an interactive front/back card showcase shell with floating motion and 3D
-perspective. Because the official card design has not been supplied and approved, the showcase is explicitly labelled
-`Design pending`, `Sample preview` and `NOT AN OFFICIAL ID`. No card layout, colours, seal, typography or citizen data
-has been invented. Replace the two faces when the confirmed design is provided.
+(`/apply?from=abroad`). It also includes an interactive 3D front/back showcase using the supplied artwork in
+`public/cards/`. The display is explicitly labelled `Prototype preview` and `Not an official ID`; it does not claim that
+a card has been issued or that any citizen data is real.
 
 ## National ID application (prototype)
 
@@ -154,7 +154,7 @@ fictional names and generated sample files. Fictional records are added to the l
 
 ## What works today
 
-- Landing page with two application entry routes and a responsive design-pending card showcase.
+- Landing page with two application entry routes and a responsive front/back card showcase using the supplied artwork.
 - Create an account locally or from abroad, with Sierra Leone or international phone normalisation.
 - Phone/email verification with a 6-digit prototype code (demo code displayed).
 - Secure sign in / sign out with server-side sessions.
@@ -170,6 +170,7 @@ fictional names and generated sample files. Fictional records are added to the l
 ## Project layout
 
 ```
+public/cards/             # Supplied National ID front/back artwork
 src/
   app/
     apply/                 # National ID application page (?from=sl|abroad)
@@ -217,7 +218,7 @@ data/                      # SQLite database (gitignored)
   currently marked as unconfirmed.
 - Confirmation of the official overseas registration route, authorised locations, document requirements, verification
   arrangements and card collection/issuance process. No such arrangements are seeded or invented.
-- The actual approved National ID card front/back design for the homepage showcase.
+- Confirmation that the supplied National ID card artwork may be published for this prototype.
 - Approved photograph/document specifications and a secure document-storage/KMS service.
 - An official backend integration for submission, status updates and reference numbers.
 - Authorised staff workflows and audit requirements for review, verification and card decisions.

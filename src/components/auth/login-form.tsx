@@ -39,6 +39,9 @@ export function LoginForm() {
       <div>
         <label className="label" htmlFor="identifier">Phone number or email</label>
         <input className="input" id="identifier" name="identifier" autoComplete="username" required placeholder="076 123 456 or you@example.com" />
+        <p className="mt-1 text-xs text-ink-500">
+          Use the phone number or email you registered with. International numbers can include + or 00.
+        </p>
       </div>
       <div>
         <label className="label" htmlFor="password">Password</label>

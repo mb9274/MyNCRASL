@@ -94,36 +94,56 @@ async function main() {
   const suffixA = random;
   const suffixB = nextSuffix(suffixA);
   const suffixC = nextSuffix(suffixB);
-  const suffixD = nextSuffix(suffixC);
 
   console.log("Accounts and international phone support");
   const userA = await createVerifiedUser("Aminata Fictional Test", `076${suffixA}`, `idtest${suffixA}@example.test`);
   const userB = await createVerifiedUser("Musa Fictional Test", `076${suffixB}`, `idtest${suffixB}@example.test`);
   const ukUser = await createVerifiedUser(
     "Fatima Fictional Diaspora",
-    "+447700900123",
+    `+447700${suffixA}`,
     `diasporauk${suffixA}@example.test`,
     { countryOfResidence: "United Kingdom", registrationRoute: "abroad" },
   );
   const usUser = await createVerifiedUser(
     "Kofi Fictional Diaspora",
-    "+12025550123",
+    `+1202555${suffixB}`,
     `diasporaus${suffixB}@example.test`,
     { countryOfResidence: "United States", registrationRoute: "abroad" },
   );
 
   const ukLogin = await api("/api/auth/login", {
     method: "POST",
-    body: { identifier: "+44 7700 900123", password: PASSWORD },
+    body: { identifier: `+44 7700 ${suffixA}`, password: PASSWORD },
     expectStatus: 200,
   });
-  assert(ukLogin.data.data.user.phone === "+447700900123", "a UK account signs in with an international number");
+  assert(ukLogin.data.data.user.phone === `+447700${suffixA}`, "a UK account signs in with an international number");
   const usLogin = await api("/api/auth/login", {
     method: "POST",
-    body: { identifier: "001 202 555 0123", password: PASSWORD },
+    body: { identifier: `001 202 555 ${suffixB}`, password: PASSWORD },
     expectStatus: 200,
   });
-  assert(usLogin.data.data.user.phone === "+12025550123", "a US account signs in using the 00 international prefix");
+  assert(usLogin.data.data.user.phone === `+1202555${suffixB}`, "a US account signs in using the 00 international prefix");
+
+  const trunkZeroLogin = await api("/api/auth/login", {
+    method: "POST",
+    body: { identifier: `+44 (0) 7700 ${suffixA}`, password: PASSWORD },
+    expectStatus: 200,
+  });
+  assert(trunkZeroLogin.data.data.user.phone === `+447700${suffixA}`, "a UK trunk-zero format still signs in");
+
+  const mixedCaseEmailLogin = await api("/api/auth/login", {
+    method: "POST",
+    body: { identifier: `DIASPORAUK${suffixA}@EXAMPLE.TEST`, password: PASSWORD },
+    expectStatus: 200,
+  });
+  assert(mixedCaseEmailLogin.data.data.user.phone === `+447700${suffixA}`, "email sign-in is case-insensitive");
+
+  const bareLocalLogin = await api("/api/auth/login", {
+    method: "POST",
+    body: { identifier: `76${suffixA}`, password: PASSWORD },
+    expectStatus: 200,
+  });
+  assert(bareLocalLogin.data.data.user.phone === `+23276${suffixA}`, "a Sierra Leone number signs in without the trunk zero");
 
   const invalidAbroad = await api("/api/auth/register", {
     method: "POST",
@@ -277,7 +297,11 @@ async function main() {
   const homepage = await api("/", { expectStatus: 200 });
   assert(homepage.text.includes("Apply for Your National ID"), "homepage offers the Sierra Leone entry route");
   assert(homepage.text.includes("Living Abroad"), "homepage offers the overseas entry route");
-  assert(homepage.text.includes("Design pending"), "card showcase remains a neutral design-pending shell");
+  assert(homepage.text.includes("Card front and back"), "card showcase uses the supplied front/back artwork");
+  assert(
+    homepage.text.includes("Prototype preview · Not an official ID"),
+    "showcase remains clearly marked as a non-official prototype",
+  );
 
   const detailPage = await api(`/applications/${applicationId}`, { cookie: userA.cookie, expectStatus: 200 });
   assert(detailPage.text.includes(reference), "detail page shows the reference number");
@@ -336,8 +360,8 @@ async function main() {
     overseasAddress: "14 Fictional Street, Fictional Area",
     overseasCity: "London",
     internationalDialCode: "+44",
-    internationalNationalNumber: "7700900123",
-    phone: "+447700900123",
+    internationalNationalNumber: `7700${suffixA}`,
+    phone: `+447700${suffixA}`,
     email: `diasporauk${suffixA}@example.test`,
     preferredContactMethod: "WhatsApp",
     consent: true,
@@ -509,7 +533,7 @@ async function main() {
     assert(ukSavedForm.countryOfBirth === "Sierra Leone", "country of birth is stored separately");
     assert(ukSavedForm.nationality === "Sierra Leonean", "nationality is stored separately");
     assert(ukSavedForm.residentialAddress === "", "no Sierra Leone residential address is required abroad");
-    assert(ukSavedForm.phone === "+447700900123", "international phone is normalised and stored");
+    assert(ukSavedForm.phone === `+447700${suffixA}`, "international phone is normalised and stored");
     assert(ukSavedForm.timeZone === "Europe/London", "applicant time zone is stored for date display");
 
     const ukDocuments = db
@@ -529,7 +553,7 @@ async function main() {
     assert(ukUserRow.email_verified === 1, "email verification flag is set after prototype verification");
     const usUserRow = db.prepare("SELECT * FROM users WHERE id = ?").get(usUser.userId);
     assert(usUserRow.country_of_residence === "United States", "US country of residence is stored on the account");
-    assert(usUserRow.phone === "+12025550123", "US international phone is normalised");
+    assert(usUserRow.phone === `+1202555${suffixB}`, "US international phone is normalised");
 
     const inactiveArrangement = db.prepare("SELECT * FROM overseas_arrangements WHERE id = ?").get(arrangementId);
     assert(inactiveArrangement.is_active === 0, "deactivated arrangement remains in the audit trail but is hidden");

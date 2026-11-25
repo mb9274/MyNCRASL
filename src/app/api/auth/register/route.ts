@@ -41,7 +41,9 @@ export async function POST(request: Request) {
     }
 
     if (findUserByPhone(phone)) throw new Error("CONFLICT");
-    const email = input.email || null;
+    // Store email addresses in one canonical form so sign-in works regardless
+    // of how a person capitalises the address they registered with.
+    const email = input.email ? input.email.toLowerCase() : null;
     if (email && findUserByEmail(email)) throw new Error("CONFLICT");
 
     const user = createUser({
