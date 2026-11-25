@@ -10,7 +10,9 @@ import type {
   DocumentRecord,
   Language,
   Notification,
+  NotificationOutbox,
   Office,
+  OverseasArrangement,
   Role,
   User,
 } from "./types";
@@ -158,6 +160,32 @@ function migrate(database: Db) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS notification_outbox (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      application_id TEXT REFERENCES applications(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued_not_sent',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS overseas_arrangements (
+      id TEXT PRIMARY KEY,
+      country TEXT NOT NULL,
+      location_name TEXT NOT NULL,
+      location_type TEXT NOT NULL,
+      appointment_availability TEXT NOT NULL,
+      verification_instructions TEXT NOT NULL,
+      collection_instructions TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      updated_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS voice_messages (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -176,11 +204,15 @@ function migrate(database: Db) {
     CREATE INDEX IF NOT EXISTS idx_applications_user ON applications(user_id);
     CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+    CREATE INDEX IF NOT EXISTS idx_outbox_user ON notification_outbox(user_id);
+    CREATE INDEX IF NOT EXISTS idx_arrangements_country ON overseas_arrangements(country);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
   `);
 
-  // Additive migrations for passport photograph support. Existing records are untouched.
+  // Additive migrations. Existing records are never rewritten or removed.
+  ensureColumn(database, "users", "country_of_residence", "TEXT");
+  ensureColumn(database, "users", "email_verified", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(database, "documents", "storage_path", "TEXT");
   ensureColumn(database, "documents", "content", "BLOB");
   ensureColumn(database, "documents", "checksum", "TEXT");
@@ -231,10 +263,12 @@ function toUser(row: Record<string, unknown>): UserWithHash {
     phone: String(row.phone),
     email: row.email ? String(row.email) : null,
     fullName: String(row.full_name),
+    countryOfResidence: row.country_of_residence ? String(row.country_of_residence) : null,
     passwordHash: String(row.password_hash),
     preferredLanguage: row.preferred_language as Language,
     role: row.role as Role,
     isVerified: Number(row.is_verified) === 1,
+    emailVerified: Number(row.email_verified ?? 0) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -259,6 +293,7 @@ export function createUser(input: {
   phone: string;
   email: string | null;
   fullName: string;
+  countryOfResidence?: string | null;
   passwordHash: string;
   preferredLanguage: Language;
   role?: Role;
@@ -266,21 +301,29 @@ export function createUser(input: {
   const id = newId("usr");
   const timestamp = now();
   db.prepare(
-    `INSERT INTO users (id, phone, email, full_name, password_hash, preferred_language, role, is_verified, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-  ).run(id, input.phone, input.email, input.fullName, input.passwordHash, input.preferredLanguage, input.role ?? "citizen", timestamp, timestamp);
+    `INSERT INTO users (id, phone, email, full_name, country_of_residence, password_hash, preferred_language, role, is_verified, email_verified, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+  ).run(
+    id, input.phone, input.email, input.fullName, input.countryOfResidence ?? null,
+    input.passwordHash, input.preferredLanguage, input.role ?? "citizen", timestamp, timestamp,
+  );
   return findUserById(id)!;
 }
 
-export function updateUser(id: string, changes: Partial<Pick<User, "fullName" | "email" | "preferredLanguage" | "isVerified">>): User | null {
+export function updateUser(
+  id: string,
+  changes: Partial<Pick<User, "fullName" | "email" | "countryOfResidence" | "preferredLanguage" | "isVerified" | "emailVerified">>,
+): User | null {
   const existing = findUserById(id);
   if (!existing) return null;
   const fields: string[] = [];
   const values: SQLInputValue[] = [];
   if (changes.fullName !== undefined) { fields.push("full_name = ?"); values.push(changes.fullName); }
   if (changes.email !== undefined) { fields.push("email = ?"); values.push(changes.email); }
+  if (changes.countryOfResidence !== undefined) { fields.push("country_of_residence = ?"); values.push(changes.countryOfResidence); }
   if (changes.preferredLanguage !== undefined) { fields.push("preferred_language = ?"); values.push(changes.preferredLanguage); }
   if (changes.isVerified !== undefined) { fields.push("is_verified = ?"); values.push(changes.isVerified ? 1 : 0); }
+  if (changes.emailVerified !== undefined) { fields.push("email_verified = ?"); values.push(changes.emailVerified ? 1 : 0); }
   if (fields.length === 0) return existing;
   fields.push("updated_at = ?");
   values.push(now(), id);
@@ -414,6 +457,123 @@ export function markNotificationRead(id: string, userId: string): void {
   db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
+/** Records an intended message without sending it. Prototype only. */
+export function addNotificationOutbox(input: {
+  userId: string;
+  applicationId?: string | null;
+  channel: NotificationOutbox["channel"];
+  recipient: string;
+  title: string;
+  body: string;
+}): NotificationOutbox {
+  const id = newId("out");
+  db.prepare(
+    `INSERT INTO notification_outbox (id, user_id, application_id, channel, recipient, title, body, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued_not_sent', ?)`,
+  ).run(
+    id, input.userId, input.applicationId ?? null, input.channel,
+    input.recipient, input.title, input.body, now(),
+  );
+  const row = db.prepare("SELECT * FROM notification_outbox WHERE id = ?").get(id) as Record<string, unknown>;
+  return {
+    id: String(row.id), userId: String(row.user_id),
+    applicationId: row.application_id ? String(row.application_id) : null,
+    channel: row.channel as NotificationOutbox["channel"], recipient: String(row.recipient),
+    title: String(row.title), body: String(row.body), status: "queued_not_sent", createdAt: String(row.created_at),
+  };
+}
+
+export function listNotificationOutbox(userId: string, applicationId?: string): NotificationOutbox[] {
+  const rows = applicationId
+    ? db.prepare("SELECT * FROM notification_outbox WHERE user_id = ? AND application_id = ? ORDER BY created_at DESC LIMIT 50").all(userId, applicationId) as Record<string, unknown>[]
+    : db.prepare("SELECT * FROM notification_outbox WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").all(userId) as Record<string, unknown>[];
+  return rows.map((row) => ({
+    id: String(row.id), userId: String(row.user_id),
+    applicationId: row.application_id ? String(row.application_id) : null,
+    channel: row.channel as NotificationOutbox["channel"], recipient: String(row.recipient),
+    title: String(row.title), body: String(row.body), status: "queued_not_sent", createdAt: String(row.created_at),
+  }));
+}
+
+function toArrangement(row: Record<string, unknown>): OverseasArrangement {
+  return {
+    id: String(row.id), country: String(row.country), locationName: String(row.location_name),
+    locationType: String(row.location_type), appointmentAvailability: String(row.appointment_availability),
+    verificationInstructions: String(row.verification_instructions),
+    collectionInstructions: String(row.collection_instructions),
+    isActive: Number(row.is_active) === 1,
+    updatedBy: row.updated_by ? String(row.updated_by) : null,
+    createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+  };
+}
+
+export function listOverseasArrangements(country?: string): OverseasArrangement[] {
+  const rows = country
+    ? db.prepare(
+        `SELECT * FROM overseas_arrangements
+         WHERE is_active = 1 AND (country = ? OR country = 'All countries')
+         ORDER BY CASE WHEN country = ? THEN 0 ELSE 1 END, location_name`,
+      ).all(country, country) as Record<string, unknown>[]
+    : db.prepare("SELECT * FROM overseas_arrangements WHERE is_active = 1 ORDER BY country, location_name").all() as Record<string, unknown>[];
+  return rows.map(toArrangement);
+}
+
+export function listAllOverseasArrangements(): OverseasArrangement[] {
+  const rows = db.prepare("SELECT * FROM overseas_arrangements ORDER BY country, location_name").all() as Record<string, unknown>[];
+  return rows.map(toArrangement);
+}
+
+export function findOverseasArrangement(id: string): OverseasArrangement | null {
+  const row = db.prepare("SELECT * FROM overseas_arrangements WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  return row ? toArrangement(row) : null;
+}
+
+export function saveOverseasArrangement(input: {
+  id?: string | null;
+  country: string;
+  locationName: string;
+  locationType: string;
+  appointmentAvailability: string;
+  verificationInstructions: string;
+  collectionInstructions: string;
+  isActive: boolean;
+  updatedBy: string;
+}): OverseasArrangement {
+  const timestamp = now();
+  if (input.id) {
+    const existing = findOverseasArrangement(input.id);
+    if (!existing) throw new Error("NOT_FOUND");
+    db.prepare(
+      `UPDATE overseas_arrangements SET country = ?, location_name = ?, location_type = ?, appointment_availability = ?,
+       verification_instructions = ?, collection_instructions = ?, is_active = ?, updated_by = ?, updated_at = ?
+       WHERE id = ?`,
+    ).run(
+      input.country, input.locationName, input.locationType, input.appointmentAvailability,
+      input.verificationInstructions, input.collectionInstructions, input.isActive ? 1 : 0,
+      input.updatedBy, timestamp, input.id,
+    );
+    return findOverseasArrangement(input.id)!;
+  }
+  const id = newId("arr");
+  db.prepare(
+    `INSERT INTO overseas_arrangements (id, country, location_name, location_type, appointment_availability,
+     verification_instructions, collection_instructions, is_active, updated_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id, input.country, input.locationName, input.locationType, input.appointmentAvailability,
+    input.verificationInstructions, input.collectionInstructions, input.isActive ? 1 : 0,
+    input.updatedBy, timestamp, timestamp,
+  );
+  return findOverseasArrangement(id)!;
+}
+
+export function deactivateOverseasArrangement(id: string, actorId: string): boolean {
+  const result = db.prepare(
+    "UPDATE overseas_arrangements SET is_active = 0, updated_by = ?, updated_at = ? WHERE id = ?",
+  ).run(actorId, now(), id);
+  return result.changes > 0;
+}
+
 export function addAuditLog(input: {
   actorId?: string | null;
   action: string;
@@ -451,6 +611,17 @@ export function findApplicationForUser(userId: string, applicationId: string): A
     | Record<string, unknown>
     | undefined;
   return row ? toApplication(row) : null;
+}
+
+/** Admin-only lookup. Callers must check the acting user's role first. */
+export function findApplicationById(applicationId: string): Application | null {
+  const row = db.prepare("SELECT * FROM applications WHERE id = ?").get(applicationId) as Record<string, unknown> | undefined;
+  return row ? toApplication(row) : null;
+}
+
+export function listAllApplications(): Application[] {
+  const rows = db.prepare("SELECT * FROM applications ORDER BY updated_at DESC").all() as Record<string, unknown>[];
+  return rows.map(toApplication);
 }
 
 export function listApplicationsForUser(userId: string): Application[] {
@@ -583,6 +754,79 @@ export function removeApplicationPhoto(userId: string, applicationId: string): b
   return result.changes > 0;
 }
 
+export const SUPPORTING_DOCUMENT_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"] as const;
+
+export function saveSupportingDocument(input: {
+  userId: string;
+  applicationId: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+  checksum: string;
+  content: Buffer;
+}): DocumentRecord | null {
+  const application = findApplicationForUser(input.userId, input.applicationId);
+  if (!application || application.status !== "draft") return null;
+  const id = newId("doc");
+  db.prepare(
+    `INSERT INTO documents (id, application_id, user_id, doc_type, original_name, stored_name, storage_path,
+     mime_type, size_bytes, checksum, content, is_active, created_at)
+     VALUES (?, ?, ?, 'supporting_document', ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+  ).run(
+    id, input.applicationId, input.userId, input.originalName, input.storagePath, input.storagePath,
+    input.mimeType, input.sizeBytes, input.checksum, input.content, now(),
+  );
+  const row = db.prepare("SELECT * FROM documents WHERE id = ?").get(id) as Record<string, unknown>;
+  addAuditLog({
+    actorId: input.userId, action: "document.uploaded", targetType: "application",
+    targetId: input.applicationId, detail: `supporting_document=${id}`,
+  });
+  return toDocument(row);
+}
+
+export function listSupportingDocuments(userId: string, applicationId: string): DocumentRecord[] {
+  const rows = db.prepare(
+    `SELECT d.* FROM documents d
+     JOIN applications a ON a.id = d.application_id
+     WHERE d.application_id = ? AND a.user_id = ? AND d.doc_type = 'supporting_document' AND d.is_active = 1
+     ORDER BY d.created_at ASC`,
+  ).all(applicationId, userId) as Record<string, unknown>[];
+  return rows.map((row) => toDocument(row));
+}
+
+export function getSupportingDocument(userId: string, applicationId: string, documentId: string): DocumentRecord | null {
+  const row = db.prepare(
+    `SELECT d.* FROM documents d
+     JOIN applications a ON a.id = d.application_id
+     WHERE d.application_id = ? AND d.user_id = ? AND a.user_id = ? AND d.id = ?
+     AND d.doc_type = 'supporting_document' AND d.is_active = 1`,
+  ).get(applicationId, userId, userId, documentId) as Record<string, unknown> | undefined;
+  return row ? toDocument(row, true) : null;
+}
+
+export function removeSupportingDocument(userId: string, applicationId: string, documentId: string): boolean {
+  const application = findApplicationForUser(userId, applicationId);
+  if (!application || application.status !== "draft") return false;
+  const result = db.prepare(
+    `UPDATE documents SET is_active = 0 WHERE id = ? AND application_id = ? AND user_id = ?
+     AND doc_type = 'supporting_document' AND is_active = 1`,
+  ).run(documentId, applicationId, userId);
+  return result.changes > 0;
+}
+
+/** Prototype-only queue. No SMS, WhatsApp or email gateway is connected. */
+function queuePrototypeMessages(userId: string, application: Application, title: string): void {
+  const user = findUserById(userId);
+  const body = `${title}: application ${application.reference}. This is a queued prototype message; nothing was delivered.`;
+  if (user?.email) {
+    addNotificationOutbox({ userId, applicationId: application.id, channel: "email", recipient: user.email, title, body });
+  }
+  if (user?.phone) {
+    addNotificationOutbox({ userId, applicationId: application.id, channel: "whatsapp", recipient: user.phone, title, body });
+  }
+}
+
 /** Finalises a draft. Reference and status are changed atomically; repeat calls are idempotent. */
 export function submitApplication(userId: string, applicationId: string, formData: Record<string, unknown>): Application | null {
   const current = findApplicationForUser(userId, applicationId);
@@ -608,6 +852,7 @@ export function submitApplication(userId: string, applicationId: string, formDat
     title: "Test application submitted",
     body: `Your application ${submitted.reference} was received in this prototype. It has not been sent to NCRA.`,
   });
+  queuePrototypeMessages(userId, submitted, "Test application submitted");
   addAuditLog({
     actorId: userId,
     action: "application.submitted",
@@ -616,4 +861,36 @@ export function submitApplication(userId: string, applicationId: string, formDat
     detail: `reference=${submitted.reference} (prototype, not sent to NCRA)`,
   });
   return submitted;
+}
+
+/** Demo-only workflow control for authorised administrators. */
+export function setApplicationStatusAsAdmin(
+  applicationId: string,
+  input: { status: ApplicationStatus; note: string; actorId: string },
+): Application | null {
+  const current = findApplicationById(applicationId);
+  if (!current) return null;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE applications SET status = ?, updated_at = ? WHERE id = ?").run(input.status, now(), applicationId);
+    addApplicationEvent(applicationId, current.status, input.status, input.actorId, input.note);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  const updated = findApplicationById(applicationId)!;
+  const info = `Prototype status change: ${input.status.replaceAll("_", " ")}${input.note ? ` — ${input.note}` : ""}`;
+  addNotification({
+    userId: updated.userId,
+    applicationId,
+    title: "Application update in prototype",
+    body: info,
+  });
+  queuePrototypeMessages(updated.userId, updated, "Application update in prototype");
+  addAuditLog({
+    actorId: input.actorId, action: "application.status_changed", targetType: "application",
+    targetId: applicationId, detail: `${current.status} -> ${input.status} (prototype)`,
+  });
+  return updated;
 }

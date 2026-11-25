@@ -1,13 +1,22 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import {
-  ALL_FIELDS,
-  applicantsName,
-  formatApplicationDate,
   STATUS_INFO,
+  applicantsName,
+  countryOfResidence,
+  fieldsForApplication,
+  formatApplicationDate,
+  isDiaspora,
+  timeZoneForApplication,
 } from "@/lib/application-config";
+import { findCountry } from "@/lib/countries";
 import { getCurrentUser } from "@/lib/auth";
-import { findApplicationForUser, listApplicationEvents } from "@/lib/db";
+import {
+  findApplicationForUser,
+  listApplicationEvents,
+  listOverseasArrangements,
+  listSupportingDocuments,
+} from "@/lib/db";
 import type { ApplicationStatus } from "@/lib/types";
 
 function asString(value: unknown): string {
@@ -30,9 +39,19 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
   if (!application) notFound();
 
   const events = listApplicationEvents(user.id, id);
+  const documents = listSupportingDocuments(user.id, id);
   const info = STATUS_INFO[application.status];
   const name = applicantsName(application.formData);
-  const previewUrl = application.photoStoragePath ? `/api/applications/${id}/photo` : "";
+  const previewUrl = application.photoStoragePath ? `/api/applications/${application.id}/photo` : "";
+  const abroad = isDiaspora(application.formData);
+  const timeZone = timeZoneForApplication(application.formData);
+  const country = countryOfResidence(application.formData);
+  const arrangements = abroad ? listOverseasArrangements(country) : [];
+  const countryInfo = findCountry(country);
+  const submittedDate = formatApplicationDate(
+    application.status === "draft" ? application.createdAt : application.submittedAt,
+    timeZone,
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
@@ -44,12 +63,16 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
           <h1 className="mt-1 text-3xl font-bold">{name}</h1>
           <p className="mt-2 text-sm text-ink-500">
             Reference <span className="font-semibold text-ink-900">{application.reference}</span> ·{" "}
-            {application.status === "draft"
-              ? `Started ${formatApplicationDate(application.createdAt)}`
-              : `Submitted ${formatApplicationDate(application.submittedAt)}`}
+            {application.status === "draft" ? `Started ${submittedDate}` : `Submitted ${submittedDate}`}
           </p>
+          {abroad && <p className="mt-1 text-sm text-ink-500">Country of residence: {country}</p>}
         </div>
-        <span className={`badge ${badgeClass(application.status)}`}>{info.label}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {application.status !== "draft" && (
+            <Link href={`/applications/${application.id}/print`} className="btn-secondary">Print confirmation</Link>
+          )}
+          <span className={`badge ${badgeClass(application.status)}`}>{info.label}</span>
+        </div>
       </header>
 
       <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -62,13 +85,20 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
           <h2 className="text-xl font-bold">Applicant information</h2>
           <p className="mt-1 text-sm text-ink-500">The information saved with this application.</p>
           <dl className="mt-5 grid gap-x-6 gap-y-4 sm:grid-cols-2">
-            {ALL_FIELDS.map((field) => (
+            {fieldsForApplication(application.formData).map((field) => (
               <div key={field.key}>
                 <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">{field.label}</dt>
                 <dd className="mt-0.5 break-words text-sm font-semibold text-ink-900">{asString(application.formData[field.key])}</dd>
               </div>
             ))}
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">Time zone used for dates</dt>
+              <dd className="mt-0.5 text-sm font-semibold text-ink-900">{timeZone}</dd>
+            </div>
           </dl>
+          {countryInfo?.timeZoneNote && (
+            <p className="mt-4 text-xs text-ink-500">{countryInfo.timeZoneNote}</p>
+          )}
         </section>
 
         <section className="card p-6">
@@ -86,6 +116,21 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
             <p className="mt-3 break-all text-xs text-ink-500">{application.photoOriginalName}</p>
           )}
           <p className="mt-2 text-xs text-ink-500">Logical reference: {application.photoStoragePath ?? "none"}</p>
+
+          <h3 className="mt-6 font-bold">Supporting documents</h3>
+          {documents.length === 0 ? (
+            <p className="mt-2 text-sm text-ink-500">None uploaded.</p>
+          ) : (
+            <ul className="mt-2 space-y-2 text-sm">
+              {documents.map((document) => (
+                <li key={document.id} className="break-all">
+                  <a className="font-semibold text-brand-700 hover:underline" href={`/api/applications/${id}/documents/${document.id}`} target="_blank" rel="noreferrer">
+                    {document.originalName}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </div>
 
@@ -110,7 +155,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
               {events.map((event) => (
                 <li key={event.id} className="border-l-2 border-brand-100 pl-4">
                   <p className="text-sm font-semibold">{STATUS_INFO[event.toStatus].label}</p>
-                  <p className="mt-0.5 text-xs text-ink-500">{formatApplicationDate(event.createdAt)}</p>
+                  <p className="mt-0.5 text-xs text-ink-500">{formatApplicationDate(event.createdAt, timeZone)}</p>
                   {event.note && <p className="mt-1 text-xs text-ink-500">{event.note}</p>}
                 </li>
               ))}
@@ -118,6 +163,31 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
           )}
         </section>
       </div>
+
+      {abroad && (
+        <section className="card mt-6 p-6">
+          <h2 className="text-xl font-bold">Overseas verification instructions</h2>
+          {arrangements.length === 0 ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-ink-700">
+              No authorised overseas arrangement has been configured for {country}. This prototype cannot direct you to
+              an embassy, consulate, biometric appointment or collection point. Keep your reference and check official
+              NCRA channels for the next authorised step.
+            </div>
+          ) : (
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {arrangements.map((arrangement) => (
+                <article key={arrangement.id} className="rounded-xl border border-slate-200 p-4 text-sm">
+                  <p className="font-bold">{arrangement.locationName}</p>
+                  <p className="text-xs text-ink-500">{arrangement.locationType}</p>
+                  <p className="mt-2"><span className="font-semibold">Appointments:</span> {arrangement.appointmentAvailability}</p>
+                  <p className="mt-1"><span className="font-semibold">Verification:</span> {arrangement.verificationInstructions}</p>
+                  <p className="mt-1"><span className="font-semibold">Collection/issuance:</span> {arrangement.collectionInstructions}</p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

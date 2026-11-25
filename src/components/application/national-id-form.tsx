@@ -5,15 +5,24 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   ADDRESS_FIELDS,
+  DIASPORA_FIELDS,
+  LOCATION_FIELD,
   PERSONAL_FIELDS,
+  SIERRA_LEONE_ORIGIN_FIELDS,
   STATUS_INFO,
+  fieldsForApplication,
+  isDiaspora,
   type ApplicationField,
+  type ApplicationLocation,
 } from "@/lib/application-config";
+import { dialCodeForCountry, timeZoneForCountry } from "@/lib/countries";
 import type { Application } from "@/lib/types";
-import { displayPhone, normalizeSierraLeonePhone } from "@/lib/validation";
+import { displayPhone, normalizeInternationalParts, normalizeSierraLeonePhone } from "@/lib/validation";
 
 const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
-const ALLOWED = ["image/jpeg", "image/jpg", "image/png"];
+const DOCUMENT_MAX_BYTES = 5 * 1024 * 1024;
+const ALLOWED_PHOTO = ["image/jpeg", "image/jpg", "image/png"];
+const ALLOWED_DOCUMENT = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 
 interface Props {
   userId: string;
@@ -23,6 +32,8 @@ interface Props {
   fullName: string;
   phone: string;
   email: string | null;
+  defaultLocation: ApplicationLocation;
+  defaultCountry: string;
 }
 
 interface PhotoState {
@@ -32,26 +43,62 @@ interface PhotoState {
   version: number;
 }
 
-const STEPS = ["Applicant details", "Address and contact", "Photograph and review"];
+interface UploadedDocument {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath: string;
+}
+
+const STEPS = ["Applicant details", "Address and contact", "Photograph, documents and review"];
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export function NationalIdForm({ userId, initialApplication, initialValues, hasPhoto, fullName, phone, email }: Props) {
+function nationalFromPhone(phone: string, dialCode: string): string {
+  if (dialCode && phone.startsWith(dialCode)) return phone.slice(dialCode.length).trim();
+  return phone.replace(/^\+/, "").trim();
+}
+
+export function NationalIdForm({
+  userId, initialApplication, initialValues, hasPhoto, fullName, phone, email, defaultLocation, defaultCountry,
+}: Props) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
+  const documentInput = useRef<HTMLInputElement>(null);
   const draftKey = `myncra_draft_${userId}`;
   const storedKey = `myncra_draft_values_${userId}`;
+
+  const initialLocation: ApplicationLocation =
+    initialValues.applicationLocation === "abroad" || initialValues.applicationLocation === "in_sierra_leone"
+      ? initialValues.applicationLocation
+      : defaultLocation;
+  const initialCountry =
+    asString(initialValues.countryOfResidence) ||
+    (defaultCountry !== "Sierra Leone" ? defaultCountry : "");
+  const initialDialCode = asString(initialValues.internationalDialCode) || dialCodeForCountry(initialCountry);
+  const initialNationalNumber =
+    asString(initialValues.internationalNationalNumber) ||
+    (initialLocation === "abroad" ? nationalFromPhone(phone, initialDialCode) : "");
 
   const [applicationId, setApplicationId] = useState<string | null>(initialApplication?.id ?? null);
   const [step, setStep] = useState(0);
   const [values, setValues] = useState<Record<string, unknown>>(() => ({
+    applicationLocation: initialLocation,
     fullName,
-    phone: displayPhone(phone),
+    countryOfBirth: "Sierra Leone",
+    countryOfResidence: initialCountry,
+    internationalDialCode: initialDialCode,
+    internationalNationalNumber: initialNationalNumber,
+    phone: initialLocation === "abroad"
+      ? normalizeInternationalParts(initialDialCode, initialNationalNumber) ?? phone
+      : displayPhone(phone),
     email: email ?? "",
     nationality: "Sierra Leonean",
     preferredContactMethod: "SMS",
+    timeZone: timeZoneForCountry(initialCountry || "Sierra Leone"),
     consent: false,
     ...initialValues,
   }));
@@ -62,6 +109,7 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
     size: initialApplication?.photoSizeBytes ?? 0,
     version: 0,
   });
+  const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [busy, setBusy] = useState<"" | "saving" | "uploading" | "submitting" | "removing">("");
   const [notice, setNotice] = useState("");
   const [submitted, setSubmitted] = useState<Application | null>(null);
@@ -94,9 +142,60 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
     }
   }, [values, storedKey]);
 
+  useEffect(() => {
+    let active = true;
+    if (!applicationId) {
+      queueMicrotask(() => {
+        if (active) setDocuments([]);
+      });
+      return () => { active = false; };
+    }
+    void (async () => {
+      try {
+        const response = await fetch(`/api/applications/${applicationId}/documents`);
+        if (!response.ok) return;
+        const result = await response.json();
+        if (active && Array.isArray(result.data?.documents)) setDocuments(result.data.documents);
+      } catch {
+        // Supporting documents are optional while drafting.
+      }
+    })();
+    return () => { active = false; };
+  }, [applicationId]);
+
   const value = (key: string) => asString(values[key]);
+  const abroad = isDiaspora(values);
+
   const setField = (key: string, next: string | boolean) => {
-    setValues((current) => ({ ...current, [key]: next }));
+    setValues((current) => {
+      const updated: Record<string, unknown> = { ...current, [key]: next };
+      if (key === "applicationLocation") {
+        if (next === "abroad") {
+          updated.countryOfResidence = defaultCountry !== "Sierra Leone" ? defaultCountry : "";
+          updated.internationalDialCode = dialCodeForCountry(updated.countryOfResidence);
+          updated.internationalNationalNumber = nationalFromPhone(phone, asString(updated.internationalDialCode));
+          updated.timeZone = timeZoneForCountry(updated.countryOfResidence || "Sierra Leone");
+          updated.phone = normalizeInternationalParts(
+            asString(updated.internationalDialCode), asString(updated.internationalNationalNumber),
+          ) ?? "";
+        } else {
+          updated.phone = displayPhone(phone);
+        }
+      }
+      if (key === "countryOfResidence") {
+        updated.internationalDialCode = dialCodeForCountry(asString(next));
+        updated.timeZone = timeZoneForCountry(asString(next));
+        updated.phone = normalizeInternationalParts(
+          asString(updated.internationalDialCode), asString(updated.internationalNationalNumber),
+        ) ?? "";
+      }
+      if (key === "internationalDialCode" || key === "internationalNationalNumber") {
+        updated.phone = normalizeInternationalParts(
+          asString(updated.internationalDialCode), asString(updated.internationalNationalNumber),
+        ) ?? "";
+      }
+      return updated;
+    });
     setErrors((current) => {
       if (!current[key]) return current;
       const copy = { ...current };
@@ -118,7 +217,7 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
       if (!response.ok) throw new Error(result.error?.message || "Your draft could not be saved.");
       const id = String(result.data.application.id);
       setApplicationId(id);
-      localStorage.setItem(draftKey, id);
+      try { localStorage.setItem(draftKey, id); } catch { /* storage may be unavailable */ }
       return id;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Your draft could not be saved.");
@@ -130,7 +229,11 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
 
   function validateVisibleStep(): boolean {
     const found: Record<string, string> = {};
-    const fields = step === 0 ? PERSONAL_FIELDS : ADDRESS_FIELDS;
+    const fields = step === 0
+      ? [LOCATION_FIELD, ...PERSONAL_FIELDS]
+      : isDiaspora(values)
+        ? [...DIASPORA_FIELDS, ...SIERRA_LEONE_ORIGIN_FIELDS]
+        : ADDRESS_FIELDS;
     for (const field of fields) {
       if (!field.required) continue;
       if (!value(field.key).trim()) found[field.key] = `${field.label} is required.`;
@@ -141,7 +244,11 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
     if (step === 1 && value("email") && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value("email"))) {
       found.email = "Enter a valid email address or leave it blank.";
     }
-    if (step === 1 && value("phone").trim() && !normalizeSierraLeonePhone(value("phone"))) {
+    if (step === 1 && isDiaspora(values)) {
+      if (!normalizeInternationalParts(value("internationalDialCode"), value("internationalNationalNumber"))) {
+        found.internationalNationalNumber = "Enter a valid international number with country code, e.g. +44 7700 900123.";
+      }
+    } else if (step === 1 && value("phone").trim() && !normalizeSierraLeonePhone(value("phone"))) {
       found.phone = "Enter a valid Sierra Leone phone number, e.g. 076 123 456.";
     }
     setErrors(found);
@@ -166,7 +273,7 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
     if (!file) return;
     setErrors({});
     setNotice("");
-    if (!ALLOWED.includes(file.type)) {
+    if (!ALLOWED_PHOTO.includes(file.type)) {
       setErrors({ photo: "Only JPEG, JPG or PNG photographs are accepted." });
       return;
     }
@@ -219,6 +326,57 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
     }
   }
 
+  async function pickDocument(file: File | undefined) {
+    if (!file) return;
+    setErrors({});
+    setNotice("");
+    if (!ALLOWED_DOCUMENT.includes(file.type)) {
+      setErrors({ supportingDocuments: "Only PDF, JPEG, JPG or PNG supporting documents are accepted." });
+      return;
+    }
+    if (file.size > DOCUMENT_MAX_BYTES) {
+      setErrors({ supportingDocuments: "Each supporting document must be 5 MB or smaller." });
+      return;
+    }
+    let id = applicationId;
+    if (!id) {
+      id = await persistDraft(false);
+      if (!id) return;
+    }
+    setBusy("uploading");
+    try {
+      const body = new FormData();
+      body.append("document", file);
+      const response = await fetch(`/api/applications/${id}/documents`, { method: "POST", body });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || "The document could not be uploaded.");
+      setDocuments((current) => [...current, result.data.document]);
+    } catch (error) {
+      setErrors({ supportingDocuments: error instanceof Error ? error.message : "The document could not be uploaded." });
+    } finally {
+      setBusy("");
+      if (documentInput.current) documentInput.current.value = "";
+    }
+  }
+
+  async function removeDocument(documentId: string) {
+    if (!applicationId) return;
+    setBusy("removing");
+    try {
+      const response = await fetch(
+        `/api/applications/${applicationId}/documents?documentId=${encodeURIComponent(documentId)}`,
+        { method: "DELETE" },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message || "The document could not be removed.");
+      setDocuments((current) => current.filter((document) => document.id !== documentId));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The document could not be removed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function submitApplication() {
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -230,6 +388,11 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
       if (!id) return;
       if (!photo.uploaded) {
         setErrors({ photo: "Upload a passport photograph before submitting." });
+        setStep(2);
+        return;
+      }
+      if (isDiaspora(values) && documents.length === 0) {
+        setErrors({ supportingDocuments: "Upload at least one supporting document before submitting from abroad." });
         setStep(2);
         return;
       }
@@ -278,8 +441,9 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
         <p className="mt-4 text-sm font-semibold">Status: {info.label}</p>
         <p className="mt-1 text-sm text-ink-500">{info.description}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link href={`/applications/${submitted.id}/print`} className="btn-secondary">Print prototype confirmation</Link>
           <Link href={`/applications/${submitted.id}`} className="btn-primary">View application</Link>
-          <Link href="/dashboard" className="btn-secondary">Go to dashboard</Link>
+          <Link href="/dashboard" className="btn-ghost">Go to dashboard</Link>
         </div>
       </div>
     );
@@ -300,7 +464,7 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
       className: `input ${error ? "border-red-500" : ""}`,
     };
     return (
-      <div key={field.key} className={field.key === "nationalityOther" ? "sm:col-span-2" : ""}>
+      <div key={field.key} className={["nationalityOther", "applicationLocation", "countryOfResidence", "overseasAddress", "residentialAddress"].includes(field.key) ? "sm:col-span-2" : ""}>
         <label className="label" htmlFor={id}>
           {field.label}
           {field.required ? <span className="text-red-700"> *</span> : <span className="font-normal text-ink-500"> (optional)</span>}
@@ -337,11 +501,7 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
   const photoPreviewUrl = photo.uploaded && applicationId ? `/api/applications/${applicationId}/photo?v=${photo.version}` : "";
 
   return (
-    <form
-      onSubmit={(event) => { event.preventDefault(); }}
-      className="space-y-6"
-      noValidate
-    >
+    <form onSubmit={(event) => { event.preventDefault(); }} className="space-y-6" noValidate>
       <div className="card p-5 sm:p-7">
         <ol className="flex flex-wrap gap-2" aria-label="Application steps">
           {STEPS.map((label, index) => (
@@ -369,15 +529,39 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
         <section className="card p-5 sm:p-7">
           <h2 className="text-xl font-bold">Applicant details</h2>
           <p className="mt-1 text-sm text-ink-500">Fields marked * are required. You can change anything before submitting.</p>
-          <div className="mt-6 grid gap-5 sm:grid-cols-2">{PERSONAL_FIELDS.map(renderField)}</div>
+          <div className="mt-6 grid gap-5 sm:grid-cols-2">
+            {renderField(LOCATION_FIELD)}
+            {PERSONAL_FIELDS.map(renderField)}
+          </div>
+          {abroad && (
+            <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+              You are completing the <strong>overseas prototype route</strong>. Your country of residence and residential
+              address abroad are kept separate from your nationality and country of birth. No official overseas
+              registration arrangement is claimed by this prototype.
+            </div>
+          )}
         </section>
       )}
 
       {step === 1 && (
         <section className="card p-5 sm:p-7">
-          <h2 className="text-xl font-bold">Address and contact</h2>
-          <p className="mt-1 text-sm text-ink-500">Tell us where you live and how we may contact you in this prototype.</p>
-          <div className="mt-6 grid gap-5 sm:grid-cols-2">{ADDRESS_FIELDS.map(renderField)}</div>
+          <h2 className="text-xl font-bold">{abroad ? "Residence and contact abroad" : "Address and contact"}</h2>
+          <p className="mt-1 text-sm text-ink-500">
+            {abroad
+              ? "Give the address where you actually live now. A Sierra Leone address is not required."
+              : "Tell us where you live and how we may contact you in this prototype."}
+          </p>
+          <div className="mt-6 grid gap-5 sm:grid-cols-2">
+            {(abroad ? [...DIASPORA_FIELDS, ...SIERRA_LEONE_ORIGIN_FIELDS] : ADDRESS_FIELDS).map(renderField)}
+          </div>
+          {abroad && (
+            <p className="mt-4 text-xs text-ink-500">
+              Times in this prototype are shown in {value("timeZone") || "UTC"}
+              {value("countryOfResidence") === "United States" || value("countryOfResidence") === "Canada"
+                ? " (a representative time zone; these countries have several)."
+                : "."}
+            </p>
+          )}
         </section>
       )}
 
@@ -421,12 +605,52 @@ export function NationalIdForm({ userId, initialApplication, initialValues, hasP
           </div>
 
           <div className="rounded-2xl border border-slate-200 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">Supporting documents</h2>
+                <p className="mt-1 text-sm text-ink-500">
+                  PDF, JPEG, JPG or PNG, up to 5 MB each. {abroad ? "At least one is required for the overseas route." : "Optional in this prototype."}
+                </p>
+              </div>
+              <input
+                ref={documentInput}
+                id="document-input"
+                type="file"
+                accept="application/pdf,image/jpeg,image/jpg,image/png"
+                className="sr-only"
+                onChange={(event) => void pickDocument(event.target.files?.[0])}
+              />
+              <button type="button" className="btn-secondary" disabled={busy === "uploading"} onClick={() => documentInput.current?.click()}>
+                {busy === "uploading" ? "Uploading…" : "Add document"}
+              </button>
+            </div>
+            {documents.length > 0 && (
+              <ul className="mt-4 space-y-2">
+                {documents.map((document) => (
+                  <li key={document.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3 text-sm">
+                    <span className="min-w-0 break-all">
+                      <a className="font-semibold text-brand-700 hover:underline" href={`/api/applications/${applicationId}/documents/${document.id}`} target="_blank" rel="noreferrer">
+                        {document.originalName}
+                      </a>
+                      <span className="ml-2 text-ink-500">{(document.sizeBytes / 1024).toFixed(0)} KB</span>
+                    </span>
+                    <button type="button" className="btn-ghost px-0 text-sm" disabled={busy === "removing"} onClick={() => void removeDocument(document.id)}>
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {errors.supportingDocuments && <p className="mt-3 text-sm text-red-700" role="alert">{errors.supportingDocuments}</p>}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 p-5">
             <h3 className="font-bold">Review your information</h3>
             <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-              {[...PERSONAL_FIELDS, ...ADDRESS_FIELDS].filter((f) => value(f.key) && f.key !== "consent").map((field) => (
+              {fieldsForApplication(values).filter((field) => value(field.key) && field.key !== "consent").map((field) => (
                 <div key={field.key}>
                   <dt className="text-ink-500">{field.label}</dt>
-                  <dd className="font-semibold">{value(field.key)}</dd>
+                  <dd className="break-words font-semibold">{value(field.key)}</dd>
                 </div>
               ))}
             </dl>

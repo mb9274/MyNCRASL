@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { applicantsName, formatApplicationDate, STATUS_INFO } from "@/lib/application-config";
+import { applicantsName, countryOfResidence, formatApplicationDate, isDiaspora, STATUS_INFO } from "@/lib/application-config";
 import { getCurrentUser } from "@/lib/auth";
 import { listApplicationsForUser } from "@/lib/db";
 import type { ApplicationStatus } from "@/lib/types";
@@ -65,6 +65,9 @@ export default async function ApplicationsPage() {
                       <p className="text-xs font-semibold uppercase tracking-widest text-ink-500">{application.reference}</p>
                       <h2 className="mt-1 text-lg font-bold">{name}</h2>
                       <p className="mt-0.5 text-sm text-ink-500">{submittedLabel}</p>
+                      {isDiaspora(application.formData) && (
+                        <p className="mt-0.5 text-xs text-ink-500">{countryOfResidence(application.formData)}</p>
+                      )}
                       <p className="mt-0.5 text-xs text-ink-500">Photograph visible only to your signed-in account.</p>
                     </div>
                   </div>
@@ -84,7 +87,10 @@ export default async function ApplicationsPage() {
                   {isDraft ? (
                     <Link href="/apply" className="btn-primary">Continue draft</Link>
                   ) : (
-                    <Link href={`/applications/${application.id}`} className="btn-primary">View application</Link>
+                    <>
+                      <Link href={`/applications/${application.id}`} className="btn-primary">View application</Link>
+                      <Link href={`/applications/${application.id}/print`} className="btn-secondary">Print confirmation</Link>
+                    </>
                   )}
                 </div>
               </article>

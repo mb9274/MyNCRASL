@@ -25,9 +25,11 @@ export interface User {
   phone: string;
   email: string | null;
   fullName: string;
+  countryOfResidence: string | null;
   preferredLanguage: Language;
   role: Role;
   isVerified: boolean;
+  emailVerified: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,9 +96,36 @@ export interface Notification {
   applicationId: string | null;
   title: string;
   body: string;
-  channel: "in_app" | "sms" | "email";
+  channel: "in_app" | "sms" | "email" | "whatsapp";
   isRead: boolean;
   createdAt: string;
+}
+
+/** A prototype delivery record. Nothing here is sent to an external gateway. */
+export interface NotificationOutbox {
+  id: string;
+  userId: string;
+  applicationId: string | null;
+  channel: "email" | "whatsapp" | "sms";
+  recipient: string;
+  title: string;
+  body: string;
+  status: "queued_not_sent";
+  createdAt: string;
+}
+
+export interface OverseasArrangement {
+  id: string;
+  country: string;
+  locationName: string;
+  locationType: string;
+  appointmentAvailability: string;
+  verificationInstructions: string;
+  collectionInstructions: string;
+  isActive: boolean;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditLog {

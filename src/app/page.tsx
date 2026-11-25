@@ -1,12 +1,13 @@
 import Link from "next/link";
+import { NationalIdShowcase } from "@/components/national-id-showcase";
 import { getCurrentUser, getLanguagePreference } from "@/lib/auth";
 import { translate } from "@/lib/i18n";
 
 const modules = [
-  { title: "Digital ID", description: "Apply for a national ID, upload documents, book an appointment and follow every step.", icon: "ID", href: "/apply" },
+  { title: "Digital ID", description: "Apply in Sierra Leone or from abroad, upload documents and follow every step.", icon: "ID", href: "/apply" },
   { title: "VoiceBridge", description: "Speak in Krio, Mende, Temne, Limba and more. Voice guidance and translation with human escalation.", icon: "🎙", href: "/voicebridge" },
   { title: "Community Connect", description: "Authorised assistants and community centres help people who cannot easily use a smartphone.", icon: "🤝", href: "/community" },
-  { title: "Diaspora", description: "Access approved services and instructions from outside Sierra Leone.", icon: "🌍", href: "/diaspora" },
+  { title: "Diaspora", description: "Register from abroad, track progress and view configured overseas instructions.", icon: "🌍", href: "/diaspora" },
   { title: "Digital Wallet", description: "View officially issued credentials and generate a secure verification QR code.", icon: "▣", href: "/wallet" },
   { title: "Civil Registration", description: "Birth, death and marriage registration and certificate requests, each with its own workflow.", icon: "📄", href: "/services" },
   { title: "Staff Portal", description: "Secure tools for NCRA officers to review applications, documents and status changes.", icon: "⚙", href: "/staff" },
@@ -64,6 +65,8 @@ export default async function HomePage() {
       <div className="bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">
         <strong>Demo notice:</strong> {t("demoNotice")}
       </div>
+
+      <NationalIdShowcase />
 
       <section id="services" className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <h2 className="text-3xl font-bold">One platform, seven modules</h2>

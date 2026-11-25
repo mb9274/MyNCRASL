@@ -61,9 +61,11 @@ export async function getCurrentUser(): Promise<User | null> {
     phone: user.phone,
     email: user.email,
     fullName: user.fullName,
+    countryOfResidence: user.countryOfResidence,
     preferredLanguage: user.preferredLanguage,
     role: user.role,
     isVerified: user.isVerified,
+    emailVerified: user.emailVerified,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };

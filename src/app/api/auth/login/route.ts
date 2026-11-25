@@ -2,7 +2,7 @@ import { z } from "zod";
 import { audit, createUserSession, verifyPassword } from "@/lib/auth";
 import { findUserByEmail, findUserByPhone } from "@/lib/db";
 import { handleError, ok, fail } from "@/lib/http";
-import { normalizeSierraLeonePhone } from "@/lib/validation";
+import { normalizeLoginPhone } from "@/lib/validation";
 
 const schema = z.object({
   identifier: z.string().trim().min(3).max(180),
@@ -12,7 +12,7 @@ const schema = z.object({
 export async function POST(request: Request) {
   try {
     const input = schema.parse(await request.json());
-    const phone = normalizeSierraLeonePhone(input.identifier);
+    const phone = normalizeLoginPhone(input.identifier);
     const user = (phone ? findUserByPhone(phone) : null) ?? findUserByEmail(input.identifier.toLowerCase());
     if (!user || !verifyPassword(input.password, user.passwordHash)) {
       return fail("Incorrect phone number, email or password.", 401);
@@ -24,6 +24,7 @@ export async function POST(request: Request) {
         id: user.id,
         fullName: user.fullName,
         phone: user.phone,
+        countryOfResidence: user.countryOfResidence,
         preferredLanguage: user.preferredLanguage,
         role: user.role,
         isVerified: user.isVerified,

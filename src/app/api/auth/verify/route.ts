@@ -14,8 +14,8 @@ export async function POST(request: Request) {
     if (record.expires_at < new Date().toISOString()) return fail("That code has expired. Request a new one.", 400);
 
     markVerificationCodeUsed(record.id);
-    updateUser(user.id, { isVerified: true });
-    audit("user.verified", user.id);
+    updateUser(user.id, { isVerified: true, emailVerified: Boolean(user.email) });
+    audit("user.verified", user.id, user.email ? "emailVerified=true (prototype code)" : "phone verified");
     return ok({ verified: true });
   } catch (error) {
     return handleError(error);

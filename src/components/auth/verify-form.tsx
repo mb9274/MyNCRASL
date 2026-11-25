@@ -11,7 +11,7 @@ function readStoredDemoCode(): string {
   return stored;
 }
 
-export function VerifyForm({ phone }: { phone: string }) {
+export function VerifyForm({ destination }: { destination: string }) {
   const router = useRouter();
   const [storedCode] = useState(readStoredDemoCode);
   const [code, setCode] = useState(storedCode);
@@ -57,7 +57,8 @@ export function VerifyForm({ phone }: { phone: string }) {
       <div>
         <h1 className="text-2xl font-bold">Verify your account</h1>
         <p className="mt-1 text-sm text-ink-500">
-          Enter the 6-digit code sent to <span className="font-semibold">{phone}</span>.
+          In this prototype, the 6-digit demo code is shown below. A real deployment would send it to{" "}
+          <span className="font-semibold">{destination}</span>.
         </p>
       </div>
 
